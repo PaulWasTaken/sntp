@@ -15,6 +15,22 @@ _NTP_EPOCH = datetime.date(1900, 1, 1)
 NTP_DELTA = (_SYSTEM_EPOCH - _NTP_EPOCH).days * 24 * 3600
 
 
+def form_time(time_):
+    trunc_part, int_part = math.modf(time_)
+    trunc_part = int(str(trunc_part)[2:11])
+    return trunc_part, int_part
+
+
+def form_query():
+    leap = "00"
+    version = "100"
+    mode = "011"
+    first = int(leap + version + mode, 2)
+    return struct.pack("!bbbb 11I", first, 0, 0,
+                       0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                       int(time.time()), 0)
+
+
 class SNTPServer:
     def __init__(self, server_address, port, delay, debug):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -52,7 +68,7 @@ class SNTPServer:
                     except socket.timeout:
                         continue
                     executor.submit(self.process_new_client, addr,
-                                    data).result()
+                                    data, time.time()).result()
             except KeyboardInterrupt:
                 print("Finishing...")
                 logging.debug("---------The program was closed.---------")
@@ -71,37 +87,28 @@ class SNTPServer:
             return False
         return True
 
-    def process_new_client(self, addr, data):
+    def process_new_client(self, addr, data, recv_time):
         if not self.is_valid(data):
             return
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
             try:
                 sock.settimeout(2)
-                sock.sendto(self.form_query(), self.server_address)
+                sock.sendto(form_query(), self.server_address)
                 data, _ = sock.recvfrom(4096)
                 logging.debug("Received from a SNTP server: {}\n".format(data))
                 response = SNTPPacket().form_packet(data)
-                sock.sendto(self.form_response(response), addr)
+                sock.sendto(self.form_response(response, recv_time), addr)
                 logging.debug("Send to a client: {}\n".format(data))
             except socket.timeout:
                 print("The delay is too high. Drop the task.")
             except struct.error:
                 print("Probably incorrect server response. Try another one.")
 
-    @staticmethod
-    def form_query():
-        leap = "00"
-        version = "100"
-        mode = "011"
-        first = int(leap + version + mode, 2)
-        return struct.pack("!bbbb 11I", first, 0, 0,
-                           0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                           int(time.time()), 0)
-
-    def form_response(self, response):
+    def form_response(self, response, recv_time):
         first = int(response.leap + response.version + response.mode, 2)
-        trunc_part, int_part = math.modf(time.time())
-        trunc_part = int(str(trunc_part)[2:11])
+        trunc_recv_part, int_recv_part = form_time(recv_time)
+        trunc_send_part, int_send_part = math.modf(time.time())
+        trunc_send_part = int(str(trunc_send_part)[2:11])
         return struct.pack("!bbbb 11I", first,
                            response.stratum, response.poll,
                            response.precision, int(response.delay),
@@ -110,10 +117,10 @@ class SNTPServer:
                            0,
                            response.tx_timestamp,
                            0,
-                           self.insert_delay(time.time() + NTP_DELTA),
-                           trunc_part,
-                           self.insert_delay(time.time() + NTP_DELTA),
-                           trunc_part
+                           self.insert_delay(int_recv_part + NTP_DELTA),
+                           trunc_recv_part,
+                           self.insert_delay(int_send_part + NTP_DELTA),
+                           trunc_send_part
                            )
 
     def insert_delay(self, value):
