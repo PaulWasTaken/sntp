@@ -35,8 +35,18 @@ class SNTPServer:
     def __init__(self, server_address, port, delay, debug):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.settimeout(0.1)
-        self.sock.bind(("", port))
+        while 1:
+            try:
+                self.sock.bind(("127.0.0.1", port))
+                break
+            except OSError:
+                port = int(input("{port} is taken. Insert port.\n".format(
+                    port=port)))
+            except ArithmeticError:
+                raise
+
         self.delay = delay
+
         try:
             self.server_address = socket.getaddrinfo(
                 server_address, port)[0][4]
@@ -103,6 +113,8 @@ class SNTPServer:
                 print("The delay is too high. Drop the task.")
             except struct.error:
                 print("Probably incorrect server response. Try another one.")
+            except ConnectionError:
+                print("Something wrong with the current connection.")
 
     def form_response(self, response, recv_time):
         first = int(response.leap + response.version + response.mode, 2)
